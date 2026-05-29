@@ -9,6 +9,8 @@ Created on Mon Apr  6 10:12:07 2026
 # Mini-Project_Part-1:
 
 import csv
+import hashlib
+import os
 
 def is_password_strong(password):
     special_characters = ["@", "#", "$", "%", "&", "*"]
@@ -30,6 +32,21 @@ def is_password_strong(password):
         return True
     return False
 
+def _hash_password(password, salt=None):
+    if salt is None:
+        salt = os.urandom(32)
+    key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+    return salt.hex() + ":" + key.hex()
+
+def _verify_password(password, stored):
+    try:
+        salt_hex, key_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+        return key.hex() == key_hex
+    except (ValueError, AttributeError):
+        return False
+
 def registration():
     print("Registration Process:")
     while True:
@@ -39,8 +56,8 @@ def registration():
         if strong:
             with open("password.csv","w",newline="") as file:
                 writer = csv.writer(file)
-                writer.writerow(["Password"])
-                writer.writerow([password])
+                writer.writerow(["PasswordHash"])
+                writer.writerow([_hash_password(password)])
                 print("Password saved successfully.")
                 break
         else:
@@ -50,12 +67,12 @@ def login_process():
     with open("password.csv","r") as file:
         reader = csv.reader(file)
         next(reader)
-        saved_password = next(reader)[0]
+        saved_hash = next(reader)[0]
     
     attempts = 0
     while attempts < 3:
         new_password = input("Enter your password: ")
-        if new_password == saved_password:
+        if _verify_password(new_password, saved_hash):
             print("Login Successfully...")
             break
         else:
@@ -85,7 +102,11 @@ def write_all_students(students=None):
                 writer.writerow(s)
         else:
             while True:
-                num = int(input("Enter number of students: "))
+                try:
+                    num = int(input("Enter number of students: "))
+                except ValueError:
+                    print("Invalid input. Enter a number.")
+                    continue
                 for i in range(num):
                     name    = input(f"Enter Name of student-{i+1}: ")
                     marks   = input(f"Enter Marks of student-{i+1}: ")
@@ -149,7 +170,8 @@ def main():
     print("\n---Welcome to the File-Based User System---")
 
     try:
-        open("password.csv", "r").close()
+        with open("password.csv", "r"):
+            pass
         print("Account found. Please login.")
     except FileNotFoundError:
         print("No account found. Please register first.")

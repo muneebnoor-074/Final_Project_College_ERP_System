@@ -5,7 +5,25 @@ Created on Tue Mar 17 14:43:03 2026
 @author: Muneeb Noor
 """
 
-CORRECT_PIN = "1234"
+import hashlib
+import os
+
+def _hash_pin(pin, salt=None):
+    if salt is None:
+        salt = os.urandom(16)
+    key = hashlib.pbkdf2_hmac('sha256', pin.encode(), salt, 100_000)
+    return salt.hex() + ":" + key.hex()
+
+def _verify_pin(pin, stored):
+    try:
+        salt_hex, key_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        key = hashlib.pbkdf2_hmac('sha256', pin.encode(), salt, 100_000)
+        return key.hex() == key_hex
+    except (ValueError, AttributeError):
+        return False
+
+HASHED_PIN = _hash_pin("1234")
 balance = 5000
 
 
@@ -13,7 +31,7 @@ def verify_pin():
     attempts = 0
     while attempts < 3:
         pin = input("Enter your PIN: ")
-        if pin == CORRECT_PIN:
+        if _verify_pin(pin, HASHED_PIN):
             print("Access granted.\n")
             return True
         else:
@@ -32,7 +50,11 @@ def check_balance():
 
 def deposit():
     global balance
-    amount = float(input("Enter deposit amount: Rs. "))
+    try:
+        amount = float(input("Enter deposit amount: Rs. "))
+    except ValueError:
+        print("Invalid input. Please enter a numeric value.\n")
+        return
     if amount <= 0:
         print("Invalid amount. Please enter a positive value.\n")
     else:
@@ -43,7 +65,11 @@ def deposit():
 
 def withdraw():
     global balance
-    amount = float(input("Enter withdrawal amount: Rs. "))
+    try:
+        amount = float(input("Enter withdrawal amount: Rs. "))
+    except ValueError:
+        print("Invalid input. Please enter a numeric value.\n")
+        return
     if amount <= 0:
         print("Invalid amount. Please enter a positive value.\n")
     elif amount > balance:

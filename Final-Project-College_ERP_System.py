@@ -7,6 +7,9 @@ Created on Sat May 23 22:29:40 2026
 
 import sqlite3
 import hashlib
+import os
+import re
+import secrets
 import sys
 from datetime import date
 
@@ -19,8 +22,44 @@ def get_connection():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+def hash_password(password, salt=None):
+    if salt is None:
+        salt = os.urandom(32)
+    key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+    return salt.hex() + ":" + key.hex()
+
+def verify_password(password, stored):
+    try:
+        salt_hex, key_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        key = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+        return key.hex() == key_hex
+    except (ValueError, AttributeError):
+        return False
+
+def is_strong_password(password):
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters."
+    if not re.search(r'[A-Z]', password):
+        return False, "Password must contain at least one uppercase letter."
+    if not re.search(r'[a-z]', password):
+        return False, "Password must contain at least one lowercase letter."
+    if not re.search(r'[0-9]', password):
+        return False, "Password must contain at least one digit."
+    if not re.search(r'[!@#$%^&*(),.?\":{}|<>]', password):
+        return False, "Password must contain at least one special character."
+    return True, ""
+
+def validate_date(date_str):
+    try:
+        parts = date_str.split('-')
+        if len(parts) != 3:
+            return False
+        year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+        date(year, month, day)
+        return True
+    except (ValueError, IndexError):
+        return False
 
 def setup_database():
     conn = get_connection()
@@ -116,10 +155,13 @@ def setup_database():
 
     c.execute("SELECT id FROM users WHERE username = 'admin'")
     if not c.fetchone():
+        default_pw = secrets.token_urlsafe(16)
         c.execute("INSERT INTO users (username, password, role, name) VALUES (?, ?, 'admin', 'System Admin')",
-                  ('admin', hash_password('admin123')))
+                  ('admin', hash_password(default_pw)))
         conn.commit()
-        print("[INFO] Default admin created — username: admin | password: admin123")
+        print(f"[INFO] Default admin created — username: admin")
+        print(f"[INFO] Generated admin password: {default_pw}")
+        print("[INFO] Change this password immediately after first login.")
 
     c.execute("SELECT id FROM departments WHERE name = 'Computer Science'")
     if not c.fetchone():
@@ -201,14 +243,17 @@ def login():
 
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT id, username, role, name FROM users WHERE username=? AND password=?",
-              (username, hash_password(password)))
+    c.execute("SELECT id, username, role, name, password FROM users WHERE username=?",
+              (username,))
     user = c.fetchone()
     conn.close()
 
-    if user:
+    if user and verify_password(password, user[4]):
         print(f"\n  Welcome, {user[3]} ({user[2].upper()})!")
         return {"id": user[0], "username": user[1], "role": user[2], "name": user[3]}
+    elif user:
+        print("\n  Invalid credentials. Try again.")
+        return None
     else:
         print("\n  Invalid credentials. Try again.")
         return None
@@ -230,6 +275,12 @@ def add_student():
     name     = input("\n  Full Name: ").strip()
     username = input("  Username: ").strip()
     password = input("  Password: ").strip()
+    strong, msg = is_strong_password(password)
+    if not strong:
+        print(f"\n  Weak password: {msg}")
+        conn.close()
+        pause()
+        return
     roll     = input("  Roll Number: ").strip()
     semester = get_int_input("  Semester (1-8): ", 1, 8)
     dept_id  = get_int_input("  Department ID: ", 1)
@@ -353,6 +404,12 @@ def add_teacher():
     name     = input("\n  Full Name: ").strip()
     username = input("  Username: ").strip()
     password = input("  Password: ").strip()
+    strong, msg = is_strong_password(password)
+    if not strong:
+        print(f"\n  Weak password: {msg}")
+        conn.close()
+        pause()
+        return
     emp_id   = input("  Employee ID: ").strip()
     dept_id  = get_int_input("  Department ID: ", 1)
     contact  = input("  Contact (optional): ").strip()
@@ -634,6 +691,11 @@ def mark_attendance(user):
     att_date  = input("  Date (YYYY-MM-DD) [blank = today]: ").strip()
     if not att_date:
         att_date = str(date.today())
+    elif not validate_date(att_date):
+        print("  Invalid date format. Use YYYY-MM-DD.")
+        conn.close()
+        pause()
+        return
 
     c.execute('''SELECT s.id, s.roll_number, u.name
                  FROM enrollments e
@@ -926,6 +988,11 @@ def add_fee_record():
     amount   = get_float_input("  Total Fee Amount: ", 1)
     semester = get_int_input("  Semester: ", 1, 8)
     due_date = input("  Due Date (YYYY-MM-DD): ").strip()
+    if not validate_date(due_date):
+        print("  Invalid date format. Use YYYY-MM-DD.")
+        conn.close()
+        pause()
+        return
     try:
         c.execute("INSERT INTO fees (student_id, amount, paid, semester, due_date) VALUES (?, ?, 0, ?, ?)",
                   (student[0], amount, semester, due_date))
